@@ -1,0 +1,51 @@
+Based on our conversation, generate the specification documents for feature `{{ feature_slug }}`.
+
+## Required Output
+
+Generate **exactly three** markdown documents. Separate each document with a line containing only `---FILE: <filename>---`.
+
+### Document 1: `design.md`
+
+A technical design document covering:
+- **Overview**: What this feature does (2-3 sentences)
+- **Architecture**: How it fits into the existing system, which modules are affected
+- **Components**: New types, traits, modules to create (with brief descriptions)
+- **Data flow**: How data moves through the system
+- **API surface**: Public interfaces (function signatures, CLI args, endpoints)
+- **Error handling**: Expected failure modes and how they are handled
+
+### Document 2: `verification.md`
+
+A test and verification plan covering:
+- **Unit tests**: Key functions/modules that need unit tests, with test case descriptions
+- **Integration tests**: End-to-end scenarios to verify
+- **Edge cases**: Boundary conditions and error scenarios to test
+- **Manual verification**: Steps to manually verify the feature works
+- **Acceptance criteria**: Checklist of conditions that must be true for the feature to be considered done
+
+### Document 3: `impl-plan.md`
+
+A phased implementation plan covering:
+- **Phase breakdown**: Split the work into 2-5 incremental phases
+- Each phase must be:
+  - **Self-contained**: Can be committed independently
+  - **Testable**: Has concrete verification steps
+  - **Incremental**: Builds on the previous phase
+- For each phase, specify:
+  - Phase number and title
+  - Description of what gets built
+  - Files to create or modify
+  - Verification steps for this phase
+
+## Output Format
+
+```
+---FILE: design.md---
+(design document content)
+
+---FILE: verification.md---
+(verification document content)
+
+---FILE: impl-plan.md---
+(implementation plan content)
+```

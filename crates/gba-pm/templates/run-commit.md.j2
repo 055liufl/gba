@@ -1,0 +1,14 @@
+Generate a git commit for the changes just made in phase {{ phase_number }} of feature `{{ feature_slug }}`.
+
+## Phase {{ phase_number }}: {{ phase_description }}
+
+## Instructions
+
+1. Run `git status` to see all changed files.
+2. `git add` the relevant files (do NOT add unrelated files).
+3. Create a commit with:
+   - **Format**: Conventional Commits (`feat:`, `fix:`, `refactor:`, etc.)
+   - **Subject**: One line, max 72 characters, imperative mood
+   - **Body**: 2-3 bullet points describing the key changes (optional, only if the change is non-trivial)
+
+Do not push. Do not create a branch. The branch already exists.

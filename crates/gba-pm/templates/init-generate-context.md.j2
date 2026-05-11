@@ -1,0 +1,27 @@
+Generate a concise context document for the following directory.
+
+## Project Summary
+
+{{ project_summary }}
+
+## Directory
+
+`{{ dir_path }}`
+
+## Files in this Directory
+
+```
+{{ file_list }}
+```
+
+## Instructions
+
+Write a `.gba.md` file that describes this directory for an AI coding assistant. The document should help the AI understand:
+
+1. **Purpose**: What this directory is for (1-2 sentences).
+2. **Key files**: The most important files and what they do (bullet list).
+3. **Patterns**: Any conventions or patterns used in this directory.
+4. **Dependencies**: What this directory depends on and what depends on it.
+5. **Gotchas**: Non-obvious things an AI should know before modifying code here.
+
+Keep it under 50 lines. Be specific, not generic. Reference actual file names and types from the listing above.

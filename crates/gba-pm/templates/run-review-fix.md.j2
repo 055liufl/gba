@@ -1,0 +1,21 @@
+Address the following code review findings for feature `{{ feature_slug }}`.
+
+## Review Findings
+
+{{ review_findings }}
+
+## Design Spec
+
+{{ design_spec }}
+
+## Instructions
+
+1. Address every `CRITICAL` finding — these must be fixed.
+2. Address every `WARNING` finding — fix unless you have a strong reason not to (document the reason).
+3. `SUGGESTION` findings are optional — apply them if they improve the code without adding complexity.
+4. For each fix:
+   - Make the minimal change needed
+   - Ensure the fix does not break existing tests
+   - Run `cargo build && cargo test` after each fix
+
+After all fixes are applied, run `cargo clippy -- -D warnings` and `cargo test` one final time.

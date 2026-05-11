@@ -1,0 +1,49 @@
+Analyze this repository and produce a structured summary.
+
+## Repository Root
+
+`{{ project_root }}`
+
+## File Tree
+
+```
+{{ file_tree }}
+```
+
+{% if claude_md %}
+## Existing CLAUDE.md
+
+```
+{{ claude_md }}
+```
+{% endif %}
+
+## Instructions
+
+1. Identify the **primary language**, **framework**, and **build system**.
+2. List every **important directory** (src/, lib/, tests/, docs/, config/, etc.) with a one-line description of its purpose.
+3. Identify the **entry points** (main files, CLI binaries, server startup).
+4. Note any **conventions** visible in the codebase (naming, module organization, test patterns).
+5. Summarize the **architecture** in 2-3 sentences.
+
+## Output Format
+
+Return a JSON object with this exact structure (no markdown fences, just raw JSON):
+
+```json
+{
+  "language": "Rust",
+  "framework": "tokio",
+  "build_system": "cargo",
+  "architecture_summary": "...",
+  "directories": [
+    {
+      "path": "src/",
+      "description": "Main source code",
+      "importance": "high"
+    }
+  ],
+  "entry_points": ["src/main.rs"],
+  "conventions": ["snake_case modules", "tests in same file"]
+}
+```

@@ -1,0 +1,44 @@
+Generate a pull request for feature `{{ feature_slug }}`.
+
+## Design Spec
+
+{{ design_spec }}
+
+## Instructions
+
+1. Run `git log --oneline main..HEAD` to review all commits in this branch.
+2. Run `git diff --stat main..HEAD` to review the overall change summary.
+3. Push the current branch to origin:
+   ```
+   git push -u origin HEAD
+   ```
+4. Create the PR with `gh pr create`:
+   - **Title**: Short, descriptive, max 70 characters, imperative mood (e.g., "Add observer module for event tracking")
+   - **Body**: Use this structure:
+
+```markdown
+## Summary
+
+Brief description of what this PR implements and why.
+
+## Changes
+
+- Bullet point for each significant change
+- Group by component/module when there are many changes
+
+## Testing
+
+- How the changes were tested
+- Key test scenarios covered
+
+## Verification
+
+- [ ] `cargo build` passes
+- [ ] `cargo test` passes
+- [ ] `cargo clippy -- -D warnings` passes
+- [ ] `cargo +nightly fmt --check` passes
+```
+
+5. Return the PR URL after creation.
+
+Do NOT merge the PR. Only create it.

@@ -1,0 +1,29 @@
+Verify the implementation of feature `{{ feature_slug }}`.
+
+## Verification Spec
+
+{{ verification_spec }}
+
+## Instructions
+
+Run a comprehensive verification:
+
+1. **Build check** — run `cargo build` and ensure no compilation errors.
+2. **Lint check** — run `cargo clippy -- -D warnings` and fix any warnings.
+3. **Format check** — run `cargo +nightly fmt --check` and fix any formatting issues.
+4. **Test suite** — run `cargo test` and ensure all tests pass.
+5. **Manual verification** — follow the manual verification steps from the verification spec above.
+
+## Output
+
+Report your findings as:
+
+```
+BUILD: pass/fail
+LINT: pass/fail
+FORMAT: pass/fail
+TESTS: pass/fail (N passed, M failed)
+MANUAL: pass/fail
+```
+
+If any check fails, fix the issue and re-run until all checks pass. Do not report failure without attempting to fix it first.

@@ -1,0 +1,60 @@
+Perform a thorough code review of feature `{{ feature_slug }}`.
+
+## Design Spec
+
+{{ design_spec }}
+
+## Verification Spec
+
+{{ verification_spec }}
+
+## All Changes (diff from main)
+
+```diff
+{{ all_changes_diff }}
+```
+
+## Review Criteria
+
+Evaluate the implementation against these dimensions:
+
+### 1. Correctness
+- Does the code correctly implement what the design spec describes?
+- Are all edge cases handled?
+- Are error paths properly handled (no `unwrap()`, proper `Result` propagation)?
+
+### 2. Code Quality
+- Does the code follow SOLID and DRY principles?
+- Are functions small and focused (under 150 lines)?
+- Is naming clear and consistent with project conventions?
+
+### 3. Safety & Security
+- No `unsafe` code?
+- Input validation at boundaries?
+- No panics reachable from external input?
+
+### 4. Tests
+- Are critical paths covered by tests?
+- Are error cases tested?
+- Do test names clearly describe what they test?
+
+### 5. Performance
+- Any unnecessary allocations or clones?
+- Appropriate use of iterators vs explicit loops?
+- Any obvious O(n²) or worse algorithms?
+
+## Output Format
+
+For each finding, use this format:
+
+```
+## [SEVERITY] Brief title
+
+**File**: `path/to/file.rs:42`
+**Issue**: Description of the problem.
+**Suggestion**: How to fix it.
+```
+
+Severity levels: `CRITICAL` (must fix), `WARNING` (should fix), `SUGGESTION` (nice to have).
+
+If the code is clean, say so explicitly. Do not invent issues.

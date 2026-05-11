@@ -1,0 +1,27 @@
+[package]
+name = "gba-cli"
+description = "Command line interface for GBA (Geektime Bootcamp Agent)"
+categories = ["command-line-utilities"]
+keywords = ["agent", "cli", "tui"]
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+documentation.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "gba"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+gba-core.workspace = true
+gba-pm.workspace = true
+ratatui.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,28 @@
+You are a senior software architect. Generate a detailed, phased implementation plan for the feature `{{ feature_slug }}`.
+
+## Design Spec
+
+{{ design_spec }}
+
+## Verification Spec
+
+{{ verification_spec }}
+
+## Instructions
+
+Break the implementation into **2-5 phases**. Each phase must be:
+
+1. **Self-contained** — can be committed and built independently without breaking the project.
+2. **Testable** — has concrete verification steps that can be run after the phase completes.
+3. **Incremental** — each phase builds on the previous one.
+4. **Small** — a single phase should not take more than one AI coding session.
+
+For each phase, provide:
+
+- **Phase N: Title**
+- **Description**: What gets built in this phase (2-3 sentences).
+- **Files**: List of files to create or modify.
+- **Key implementation details**: Important design decisions or tricky parts.
+- **Verification**: How to verify this phase works (test commands, manual checks).
+
+Output the plan as a markdown document with clear phase headings.
