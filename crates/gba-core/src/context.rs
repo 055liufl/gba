@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::GbaCoreError;
 
 /// Default model used when no config file is present.
-const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
+const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 
 /// Default maximum budget in USD.
 const DEFAULT_MAX_BUDGET_USD: f64 = 10.0;

@@ -408,7 +408,7 @@ Resume Decision Flow:
 
 ```yaml
 # .gba/config.yml
-model: "claude-sonnet-4-20250514"
+model: "claude-sonnet-4-6"
 max_budget_usd: 10.0
 
 # Override max_turns per task (can only tighten, never loosen)
