@@ -3,25 +3,24 @@
 #![forbid(unsafe_code)]
 #![warn(rust_2024_compatibility, missing_docs, missing_debug_implementations)]
 
+mod cli;
+mod commands;
+
 use clap::Parser;
+use cli::{Cli, Command};
 
-/// GBA - Geektime Bootcamp Agent CLI
-#[derive(Debug, Parser)]
-#[command(name = "gba", version, about, long_about = None)]
-struct Cli {
-    /// Turn on verbose logging
-    #[arg(short, long)]
-    verbose: bool,
-}
-
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize tracing
+    // Initialize tracing with the appropriate filter level.
     let filter = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    tracing::info!("GBA CLI starting...");
-
-    Ok(())
+    match cli.command {
+        Command::Init => commands::init::execute().await,
+        Command::Plan { slug } => commands::plan::execute(&slug).await,
+        Command::Run { slug } => commands::run::execute(&slug).await,
+        Command::List => commands::list::execute().await,
+    }
 }

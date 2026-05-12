@@ -6,10 +6,18 @@
 #![forbid(unsafe_code)]
 #![warn(rust_2024_compatibility, missing_docs, missing_debug_implementations)]
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod context;
+pub mod error;
+pub mod preset;
+pub mod runner;
+pub mod state;
+pub mod types;
+
+pub use context::{GbaConfig, GbaContext, PresetOverride};
+pub use error::GbaCoreError;
+pub use preset::{PresetKind, TaskPreset};
+pub use runner::{AgentResult, AgentRunner};
+pub use state::{FeatureInfo, FeatureState, PlanState, PrState, TaskState, TotalsState};
+pub use types::{
+    Feature, FeatureStatus, InitResult, PlanResult, RunResult, TaskKind, TaskProgress, TaskStatus,
+};
