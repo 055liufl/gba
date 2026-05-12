@@ -11,19 +11,25 @@ use tracing::info;
 
 /// Execute the run command with colored progress output.
 ///
-/// Loads the project context, creates a `RunEngine`, and executes all
-/// remaining tasks for the given feature slug. Each task's progress is
-/// printed as a colored checklist line.
+/// Loads the project context, applies CLI overrides, creates a `RunEngine`,
+/// and executes all remaining tasks for the given feature slug. Each task's
+/// progress is printed as a colored checklist line.
 ///
 /// # Errors
 ///
 /// Returns an error if the project is not initialized or the run fails.
-pub async fn execute(slug: &str) -> anyhow::Result<()> {
+pub async fn execute(
+    slug: &str,
+    model_override: Option<&str>,
+    budget_override: Option<f64>,
+) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let ctx = GbaContext::load(&cwd).await?;
+    let mut ctx = GbaContext::load(&cwd).await?;
     if !ctx.is_initialized().await {
         anyhow::bail!("Project not initialized. Run `gba init` first.");
     }
+
+    ctx.apply_overrides(model_override, budget_override);
 
     print_header(slug)?;
 
@@ -51,7 +57,7 @@ fn print_header(slug: &str) -> io::Result<()> {
         Print(format!("\nRunning feature: {slug}\n")),
         SetAttribute(Attribute::Reset),
         ResetColor,
-        Print("─".repeat(40)),
+        Print("\u{2500}".repeat(40)),
         Print("\n"),
     )?;
     stdout.flush()
@@ -88,7 +94,7 @@ fn print_summary(slug: &str, result: &gba_core::RunResult) -> io::Result<()> {
     crossterm::execute!(
         stdout,
         Print("\n"),
-        Print("─".repeat(40)),
+        Print("\u{2500}".repeat(40)),
         Print("\n"),
         SetForegroundColor(Color::Green),
         SetAttribute(Attribute::Bold),

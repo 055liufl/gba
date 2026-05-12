@@ -23,19 +23,26 @@ use crate::tui::{
 
 /// Execute the plan command with a TUI interface.
 ///
-/// Discovers the project context, creates a `PlanEngine`, launches the
-/// interactive TUI chat, and finalizes the plan when the user is done.
+/// Discovers the project context, applies CLI overrides, creates a
+/// `PlanEngine`, launches the interactive TUI chat, and finalizes the
+/// plan when the user is done.
 ///
 /// # Errors
 ///
 /// Returns an error if context discovery, engine initialization, the
 /// planning workflow, or terminal setup/teardown fails.
-pub async fn execute(slug: &str) -> anyhow::Result<()> {
+pub async fn execute(
+    slug: &str,
+    model_override: Option<&str>,
+    budget_override: Option<f64>,
+) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let ctx = GbaContext::load(&cwd).await?;
+    let mut ctx = GbaContext::load(&cwd).await?;
     if !ctx.is_initialized().await {
         anyhow::bail!("Project not initialized. Run `gba init` first.");
     }
+
+    ctx.apply_overrides(model_override, budget_override);
 
     let mut engine = PlanEngine::new(ctx, slug.to_owned())?;
 

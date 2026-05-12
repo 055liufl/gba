@@ -13,6 +13,14 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub verbose: bool,
 
+    /// Override the model to use.
+    #[arg(long, global = true)]
+    pub model: Option<String>,
+
+    /// Override the maximum budget in USD.
+    #[arg(long, global = true)]
+    pub budget: Option<f64>,
+
     /// Subcommand to execute.
     #[command(subcommand)]
     pub command: Command,

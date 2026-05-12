@@ -168,6 +168,18 @@ impl GbaContext {
         self.config = load_config_from_dir(&self.gba_dir).await?;
         Ok(())
     }
+
+    /// Apply CLI overrides to the configuration.
+    ///
+    /// Merge precedence: CLI flags > config.yml > defaults.
+    pub fn apply_overrides(&mut self, model: Option<&str>, budget: Option<f64>) {
+        if let Some(m) = model {
+            self.config.model = m.to_owned();
+        }
+        if let Some(b) = budget {
+            self.config.max_budget_usd = b;
+        }
+    }
 }
 
 /// Walk up from `start` to find a directory containing `.git/` or `.gba/`.
@@ -352,5 +364,88 @@ presets:
         let ctx = GbaContext::load(dir.path()).await.unwrap();
         let path = ctx.feature_dir_numbered(3, "web-frontend");
         assert_eq!(path, dir.path().join(".gba").join("0003_web-frontend"));
+    }
+
+    #[tokio::test]
+    async fn test_should_apply_model_override() {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::create_dir(dir.path().join(".git"))
+            .await
+            .unwrap();
+
+        let mut ctx = GbaContext::load(dir.path()).await.unwrap();
+        assert_eq!(ctx.config.model, DEFAULT_MODEL);
+
+        ctx.apply_overrides(Some("claude-opus-4"), None);
+        assert_eq!(ctx.config.model, "claude-opus-4");
+        // Budget should remain default
+        assert!((ctx.config.max_budget_usd - DEFAULT_MAX_BUDGET_USD).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_should_apply_budget_override() {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::create_dir(dir.path().join(".git"))
+            .await
+            .unwrap();
+
+        let mut ctx = GbaContext::load(dir.path()).await.unwrap();
+        ctx.apply_overrides(None, Some(50.0));
+        assert!((ctx.config.max_budget_usd - 50.0).abs() < f64::EPSILON);
+        // Model should remain default
+        assert_eq!(ctx.config.model, DEFAULT_MODEL);
+    }
+
+    #[tokio::test]
+    async fn test_should_apply_both_overrides() {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::create_dir(dir.path().join(".git"))
+            .await
+            .unwrap();
+
+        let mut ctx = GbaContext::load(dir.path()).await.unwrap();
+        ctx.apply_overrides(Some("claude-opus-4"), Some(99.99));
+        assert_eq!(ctx.config.model, "claude-opus-4");
+        assert!((ctx.config.max_budget_usd - 99.99).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_should_not_change_when_no_overrides() {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::create_dir(dir.path().join(".git"))
+            .await
+            .unwrap();
+
+        let mut ctx = GbaContext::load(dir.path()).await.unwrap();
+        let original_model = ctx.config.model.clone();
+        let original_budget = ctx.config.max_budget_usd;
+
+        ctx.apply_overrides(None, None);
+        assert_eq!(ctx.config.model, original_model);
+        assert!((ctx.config.max_budget_usd - original_budget).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_should_override_config_file_values() {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::create_dir(dir.path().join(".git"))
+            .await
+            .unwrap();
+        let gba_dir = dir.path().join(".gba");
+        tokio::fs::create_dir(&gba_dir).await.unwrap();
+
+        let config_yaml = "model: \"claude-sonnet-4\"\nmax_budget_usd: 15.0\n";
+        tokio::fs::write(gba_dir.join("config.yml"), config_yaml)
+            .await
+            .unwrap();
+
+        let mut ctx = GbaContext::load(dir.path()).await.unwrap();
+        assert_eq!(ctx.config.model, "claude-sonnet-4");
+        assert!((ctx.config.max_budget_usd - 15.0).abs() < f64::EPSILON);
+
+        // CLI override takes precedence
+        ctx.apply_overrides(Some("claude-opus-4"), Some(100.0));
+        assert_eq!(ctx.config.model, "claude-opus-4");
+        assert!((ctx.config.max_budget_usd - 100.0).abs() < f64::EPSILON);
     }
 }
