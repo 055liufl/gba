@@ -15,7 +15,7 @@ pub mod state;
 pub mod types;
 
 pub use context::{GbaConfig, GbaContext, PresetOverride};
-pub use engine::{init::InitEngine, plan::PlanEngine};
+pub use engine::{init::InitEngine, plan::PlanEngine, run::RunEngine};
 pub use error::GbaCoreError;
 pub use preset::{PresetKind, TaskPreset};
 pub use runner::{AgentResult, AgentRunner};
