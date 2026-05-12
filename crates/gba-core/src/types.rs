@@ -93,6 +93,8 @@ pub struct InitResult {
     pub performed: bool,
     /// Summary text from the repo analysis.
     pub summary: String,
+    /// Number of directories for which `.gba.md` context docs were generated.
+    pub context_doc_count: usize,
 }
 
 /// Result of `gba plan`.

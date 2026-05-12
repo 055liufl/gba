@@ -52,7 +52,7 @@ async fn main() -> ExitCode {
 /// Dispatch the CLI command, applying global overrides.
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Command::Init => commands::init::execute().await,
+        Command::Init => commands::init::execute(cli.model.as_deref(), cli.budget).await,
         Command::Plan { slug } => {
             commands::plan::execute(&slug, cli.model.as_deref(), cli.budget).await
         }

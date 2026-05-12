@@ -25,7 +25,7 @@ const SYSTEM_PREFIX: &str = "System: ";
 /// Draw the planning TUI onto the given frame.
 ///
 /// Layout (top to bottom):
-/// 1. **Title bar** — shows "GBA Plan: <slug>"
+/// 1. **Title bar** — shows "GBA Plan: `<slug>`"
 /// 2. **Chat area** — scrollable message history with role-colored prefixes
 /// 3. **Status bar** — current application state indicator
 /// 4. **Input area** — visible only in the `Input` state, shows current input buffer

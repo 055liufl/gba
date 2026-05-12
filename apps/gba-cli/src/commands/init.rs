@@ -1,7 +1,6 @@
 //! Handler for the `gba init` command.
 
 use gba_core::{GbaContext, InitEngine};
-use tracing::info;
 
 /// Execute the init command.
 ///
@@ -11,17 +10,20 @@ use tracing::info;
 /// # Errors
 ///
 /// Returns an error if context discovery or initialization fails.
-pub async fn execute() -> anyhow::Result<()> {
+pub async fn execute(model: Option<&str>, budget: Option<f64>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let ctx = GbaContext::load(&cwd).await?;
+    let mut ctx = GbaContext::load(&cwd).await?;
+    ctx.apply_overrides(model, budget);
     let engine = InitEngine::new(ctx)?;
     let result = engine.run().await?;
 
     if result.performed {
-        info!("GBA initialized successfully");
-        info!("Project analysis:\n{}", result.summary);
+        println!(
+            "GBA initialized: {} context document(s) generated.",
+            result.context_doc_count
+        );
     } else {
-        info!("GBA already initialized, skipping");
+        println!("Already initialized, nothing to do.");
     }
 
     Ok(())

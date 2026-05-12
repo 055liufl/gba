@@ -2,15 +2,18 @@
 //!
 //! The `InitEngine` performs repository analysis by:
 //! 1. Scanning the project file tree to build a structural overview
-//! 2. Querying the agent to produce a project summary
-//! 3. Generating per-directory context documents (`.gba.md`) for key directories
-//! 4. Creating the `.gba/` and `.trees/` scaffold directories
+//! 2. Querying the agent to produce a project summary with directory analysis
+//! 3. Parsing the agent's JSON response to identify important directories
+//! 4. Generating per-directory context documents (`.gba.md`) for key directories
+//! 5. Updating `CLAUDE.md` with references to generated context docs
+//! 6. Creating the `.gba/` and `.trees/` scaffold directories
 
 use std::path::{Path, PathBuf};
 
 use gba_pm::PromptManager;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{
     context::GbaContext,
@@ -23,7 +26,12 @@ use crate::{
 /// Maximum directory depth when scanning the file tree.
 const MAX_SCAN_DEPTH: u32 = 3;
 
-/// Well-known directory names that are considered important for context generation.
+/// Maximum number of lines in the scanned file tree output.
+/// Prevents excessive output when scanning very large repositories.
+const MAX_SCAN_LINES: usize = 500;
+
+/// Well-known directory names used as a fallback when the agent's JSON
+/// analysis cannot be parsed. The agent's directory analysis is preferred.
 const WELL_KNOWN_DIRS: &[&str] = &[
     "src", "crates", "apps", "lib", "packages", "services", "tests", "test", "docs", "config",
     "scripts", "proto", "api", "internal", "cmd", "pkg",
@@ -43,6 +51,49 @@ const SKIP_DIRS: &[&str] = &[
     "__pycache__",
     ".next",
 ];
+
+/// Parsed directory entry from the agent's JSON analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AnalyzedDirectory {
+    /// Relative path to the directory (e.g., "src/", "crates/gba-core").
+    path: String,
+    /// One-line description of the directory's purpose.
+    #[serde(default)]
+    description: String,
+    /// Importance level: "high", "medium", or "low".
+    #[serde(default = "default_importance")]
+    importance: String,
+}
+
+fn default_importance() -> String {
+    "medium".to_owned()
+}
+
+/// Parsed JSON response from the agent's repository analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RepoAnalysis {
+    /// Primary programming language.
+    #[serde(default)]
+    language: String,
+    /// Framework used (e.g., "tokio", "actix-web").
+    #[serde(default)]
+    framework: String,
+    /// Build system (e.g., "cargo", "npm").
+    #[serde(default)]
+    build_system: String,
+    /// Brief architecture summary.
+    #[serde(default)]
+    architecture_summary: String,
+    /// Analyzed directories with importance ratings.
+    #[serde(default)]
+    directories: Vec<AnalyzedDirectory>,
+    /// Entry point files.
+    #[serde(default)]
+    entry_points: Vec<String>,
+    /// Observed conventions.
+    #[serde(default)]
+    conventions: Vec<String>,
+}
 
 /// Orchestrates the `gba init` workflow.
 ///
@@ -81,9 +132,11 @@ impl InitEngine {
     /// 1. Check whether the project is already initialized.
     /// 2. Create `.gba/` and `.trees/` directories.
     /// 3. Scan the project file tree.
-    /// 4. Query the agent to analyze the repository.
-    /// 5. Generate `.gba.md` context documents for important directories.
-    /// 6. Update `.gitignore` to include `.trees/`.
+    /// 4. Query the agent to analyze the repository (returns JSON).
+    /// 5. Parse the JSON analysis to identify important directories.
+    /// 6. Generate `.gba.md` context documents for each important directory.
+    /// 7. Append GBA context section (with `.gba.md` references) to `CLAUDE.md`.
+    /// 8. Update `.gitignore` to include `.trees/`.
     ///
     /// # Errors
     ///
@@ -94,6 +147,7 @@ impl InitEngine {
             return Ok(InitResult {
                 performed: false,
                 summary: "Already initialized".to_owned(),
+                context_doc_count: 0,
             });
         }
 
@@ -136,19 +190,25 @@ impl InitEngine {
             "repository analysis complete"
         );
 
-        // Step 6: Persist summary to .gba/summary.md
+        // Step 6: Parse the JSON analysis result to identify important directories.
+        // Falls back to well-known directory names if parsing fails.
+        let important_dirs = resolve_important_dirs(&summary, &self.ctx.project_root).await;
+        info!(
+            count = important_dirs.len(),
+            "resolved important directories"
+        );
+
+        // Step 7: Persist summary to .gba/summary.md
         let summary_path = self.ctx.gba_dir.join("summary.md");
         write_file(&summary_path, &summary).await?;
         info!(path = %summary_path.display(), "wrote project summary");
 
-        // Step 7: Append GBA context section to CLAUDE.md (create if missing)
-        append_gba_context_to_claude_md(&self.ctx.project_root).await?;
-
-        // Step 9: Identify important directories and generate context docs
-        let important_dirs = find_important_dirs(&self.ctx.project_root).await;
-        info!(count = important_dirs.len(), "found important directories");
+        // Step 8: Generate .gba.md context docs for each important directory
+        let mut generated_docs: Vec<String> = Vec::new();
 
         for dir_path in &important_dirs {
+            // dir_path was constructed from project_root.join(name), so strip_prefix always
+            // succeeds
             let relative = dir_path
                 .strip_prefix(&self.ctx.project_root)
                 .unwrap_or(dir_path);
@@ -176,15 +236,104 @@ impl InitEngine {
             let gba_md_path = dir_path.join(".gba.md");
             write_file(&gba_md_path, &context_result.text).await?;
             debug!(path = %gba_md_path.display(), "wrote context document");
+
+            generated_docs.push(format!("{relative_str}/.gba.md"));
         }
+
+        // Step 9: Append GBA context section to CLAUDE.md (after context docs are generated)
+        append_gba_context_to_claude_md(&self.ctx.project_root, &generated_docs).await?;
 
         // Step 10: Update .gitignore
         update_gitignore(&self.ctx.project_root).await?;
 
+        let context_doc_count = important_dirs.len();
+
         Ok(InitResult {
             performed: true,
             summary,
+            context_doc_count,
         })
+    }
+}
+
+/// Parse the agent's analysis JSON and resolve directory paths.
+///
+/// Extracts the `directories` array from the JSON response, filters for
+/// directories that exist on disk, and returns their absolute paths.
+/// Falls back to [`find_important_dirs`] if JSON parsing fails.
+async fn resolve_important_dirs(analysis_text: &str, project_root: &Path) -> Vec<PathBuf> {
+    // Try to extract JSON from the agent response. The agent may wrap it in
+    // markdown code fences, so try stripping those first.
+    let json_str = extract_json_block(analysis_text);
+
+    match serde_json::from_str::<RepoAnalysis>(json_str) {
+        Ok(analysis) => {
+            let mut dirs = Vec::new();
+            for entry in &analysis.directories {
+                // Normalize: strip trailing slash
+                let dir_name = entry.path.trim_end_matches('/');
+                // Reject paths with traversal or absolute paths
+                if dir_name.contains("..") || dir_name.starts_with('/') {
+                    warn!(path = %dir_name, "skipping directory with unsafe path");
+                    continue;
+                }
+                let path = project_root.join(dir_name);
+                if dir_exists(&path).await {
+                    dirs.push(path);
+                } else {
+                    debug!(path = %dir_name, "agent-identified directory does not exist, skipping");
+                }
+            }
+            if dirs.is_empty() {
+                warn!(
+                    "agent analysis returned no valid directories, falling back to well-known list"
+                );
+                find_important_dirs(project_root).await
+            } else {
+                dirs
+            }
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "failed to parse agent analysis JSON, falling back to well-known directory list"
+            );
+            find_important_dirs(project_root).await
+        }
+    }
+}
+
+/// Extract a JSON block from text that may be wrapped in markdown code fences.
+///
+/// Handles:
+/// - Raw JSON (starts with `{`)
+/// - Fenced blocks: ````json ... ``` `` or ```` ``` ... ``` ````
+fn extract_json_block(text: &str) -> &str {
+    let trimmed = text.trim();
+
+    // Try to find ```json ... ``` or ``` ... ```
+    if let Some(start) = trimmed.find("```") {
+        let after_fence = &trimmed[start + 3..];
+        // Skip optional language tag (e.g., "json")
+        let content_start = after_fence.find('\n').map_or(0, |pos| pos + 1);
+        let content = &after_fence[content_start..];
+        if let Some(end) = content.find("```") {
+            return content[..end].trim();
+        }
+    }
+
+    trimmed
+}
+
+/// Check whether a path exists and is a directory, logging warnings on errors.
+async fn dir_exists(path: &Path) -> bool {
+    match tokio::fs::metadata(path).await {
+        Ok(meta) => meta.is_dir(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "failed to check directory existence");
+            false
+        }
     }
 }
 
@@ -192,7 +341,7 @@ impl InitEngine {
 async fn create_dir(path: &Path) -> Result<(), GbaCoreError> {
     tokio::fs::create_dir_all(path)
         .await
-        .map_err(|e| GbaCoreError::StateSave {
+        .map_err(|e| GbaCoreError::Io {
             path: path.to_owned(),
             source: e.into(),
         })
@@ -202,7 +351,7 @@ async fn create_dir(path: &Path) -> Result<(), GbaCoreError> {
 async fn write_file(path: &Path, content: &str) -> Result<(), GbaCoreError> {
     tokio::fs::write(path, content.as_bytes())
         .await
-        .map_err(|e| GbaCoreError::StateSave {
+        .map_err(|e| GbaCoreError::Io {
             path: path.to_owned(),
             source: e.into(),
         })
@@ -217,10 +366,11 @@ async fn read_optional_file(path: &Path) -> Option<String> {
 ///
 /// Skips hidden directories (except `.github`), `target`, `node_modules`,
 /// `.trees`, `vendor`, and other non-essential directories.
-/// Limits traversal to `max_depth` levels.
+/// Limits traversal to `max_depth` levels and output to [`MAX_SCAN_LINES`] lines.
 async fn scan_file_tree(root: &Path, max_depth: u32) -> Result<String, GbaCoreError> {
     let mut output = String::with_capacity(4096);
-    scan_dir_recursive(root, root, 0, max_depth, &mut output).await?;
+    let mut line_count: usize = 0;
+    scan_dir_recursive(root, root, 0, max_depth, &mut output, &mut line_count).await?;
     Ok(output)
 }
 
@@ -231,28 +381,25 @@ async fn scan_dir_recursive(
     depth: u32,
     max_depth: u32,
     output: &mut String,
+    line_count: &mut usize,
 ) -> Result<(), GbaCoreError> {
-    if depth >= max_depth {
+    if depth >= max_depth || *line_count >= MAX_SCAN_LINES {
         return Ok(());
     }
 
     let mut entries = tokio::fs::read_dir(dir)
         .await
-        .map_err(|e| GbaCoreError::StateLoad {
+        .map_err(|e| GbaCoreError::Io {
             path: dir.to_owned(),
             source: e.into(),
         })?;
 
     let mut items: Vec<(String, bool)> = Vec::new();
 
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .map_err(|e| GbaCoreError::StateLoad {
-            path: dir.to_owned(),
-            source: e.into(),
-        })?
-    {
+    while let Some(entry) = entries.next_entry().await.map_err(|e| GbaCoreError::Io {
+        path: dir.to_owned(),
+        source: e.into(),
+    })? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy().to_string();
 
@@ -260,13 +407,10 @@ async fn scan_dir_recursive(
             continue;
         }
 
-        let file_type = entry
-            .file_type()
-            .await
-            .map_err(|e| GbaCoreError::StateLoad {
-                path: entry.path(),
-                source: e.into(),
-            })?;
+        let file_type = entry.file_type().await.map_err(|e| GbaCoreError::Io {
+            path: entry.path(),
+            source: e.into(),
+        })?;
 
         items.push((name_str, file_type.is_dir()));
     }
@@ -281,10 +425,22 @@ async fn scan_dir_recursive(
     let indent = "  ".repeat(depth as usize);
 
     for (name, is_dir) in &items {
+        if *line_count >= MAX_SCAN_LINES {
+            let remaining = items
+                .len()
+                .saturating_sub(items.iter().position(|(n, _)| n == name).unwrap_or(0));
+            output.push_str(&format!(
+                "{indent}... (truncated, {remaining} more entries)\n"
+            ));
+            *line_count = line_count.saturating_add(1);
+            break;
+        }
+
         if *is_dir {
             output.push_str(&indent);
             output.push_str(name);
             output.push_str("/\n");
+            *line_count = line_count.saturating_add(1);
 
             let child_path = dir.join(name);
             Box::pin(scan_dir_recursive(
@@ -293,12 +449,14 @@ async fn scan_dir_recursive(
                 depth.saturating_add(1),
                 max_depth,
                 output,
+                line_count,
             ))
             .await?;
         } else {
             output.push_str(&indent);
             output.push_str(name);
             output.push('\n');
+            *line_count = line_count.saturating_add(1);
         }
     }
 
@@ -315,19 +473,16 @@ fn should_skip_entry(name: &str) -> bool {
     SKIP_DIRS.contains(&name)
 }
 
-/// Find important directories in the project root that should receive
-/// `.gba.md` context documents.
+/// Find important directories using the well-known directory list.
 ///
+/// This is the fallback path when the agent's JSON analysis cannot be parsed.
 /// Checks for the existence of well-known directory names at the project root.
 async fn find_important_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
     for &name in WELL_KNOWN_DIRS {
         let path = root.join(name);
-        if tokio::fs::try_exists(&path).await.unwrap_or(false)
-            && let Ok(meta) = tokio::fs::metadata(&path).await
-            && meta.is_dir()
-        {
+        if dir_exists(&path).await {
             dirs.push(path);
         }
     }
@@ -339,31 +494,24 @@ async fn find_important_dirs(root: &Path) -> Vec<PathBuf> {
 async fn list_directory_files(dir: &Path) -> Result<String, GbaCoreError> {
     let mut entries = tokio::fs::read_dir(dir)
         .await
-        .map_err(|e| GbaCoreError::StateLoad {
+        .map_err(|e| GbaCoreError::Io {
             path: dir.to_owned(),
             source: e.into(),
         })?;
 
     let mut names: Vec<String> = Vec::new();
 
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .map_err(|e| GbaCoreError::StateLoad {
-            path: dir.to_owned(),
-            source: e.into(),
-        })?
-    {
+    while let Some(entry) = entries.next_entry().await.map_err(|e| GbaCoreError::Io {
+        path: dir.to_owned(),
+        source: e.into(),
+    })? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy().to_string();
 
-        let file_type = entry
-            .file_type()
-            .await
-            .map_err(|e| GbaCoreError::StateLoad {
-                path: entry.path(),
-                source: e.into(),
-            })?;
+        let file_type = entry.file_type().await.map_err(|e| GbaCoreError::Io {
+            path: entry.path(),
+            source: e.into(),
+        })?;
 
         if file_type.is_dir() {
             names.push(format!("{name_str}/"));
@@ -376,17 +524,35 @@ async fn list_directory_files(dir: &Path) -> Result<String, GbaCoreError> {
     Ok(names.join("\n"))
 }
 
-/// The GBA context section appended to `CLAUDE.md`.
-const GBA_CONTEXT_SECTION: &str = "\n\n## GBA Context\n\nThis project uses GBA for AI-assisted \
-                                   feature development. See `.gba/` for project context.\n";
+/// Build the GBA context section for `CLAUDE.md`, including references to
+/// generated `.gba.md` files.
+fn build_gba_context_section(generated_docs: &[String]) -> String {
+    let mut section = String::from(
+        "\n\n## GBA Context\n\nThis project uses GBA for AI-assisted feature development. See \
+         `.gba/` for project context.\n",
+    );
+
+    if !generated_docs.is_empty() {
+        section.push_str("\nPer-directory context docs:\n");
+        for doc_path in generated_docs {
+            section.push_str(&format!("- `{doc_path}`\n"));
+        }
+    }
+
+    section
+}
 
 /// Append a GBA context section to `CLAUDE.md` in the project root.
 ///
 /// Creates the file if it does not exist. If the file already contains the
 /// GBA context header, it is left unchanged.
-async fn append_gba_context_to_claude_md(project_root: &Path) -> Result<(), GbaCoreError> {
+async fn append_gba_context_to_claude_md(
+    project_root: &Path,
+    generated_docs: &[String],
+) -> Result<(), GbaCoreError> {
     let claude_md_path = project_root.join("CLAUDE.md");
     let existing = read_optional_file(&claude_md_path).await;
+    let section = build_gba_context_section(generated_docs);
 
     match existing {
         Some(content) => {
@@ -394,13 +560,13 @@ async fn append_gba_context_to_claude_md(project_root: &Path) -> Result<(), GbaC
                 debug!("CLAUDE.md already contains GBA context section");
             } else {
                 let mut new_content = content;
-                new_content.push_str(GBA_CONTEXT_SECTION);
+                new_content.push_str(&section);
                 write_file(&claude_md_path, &new_content).await?;
                 debug!("appended GBA context section to CLAUDE.md");
             }
         }
         None => {
-            write_file(&claude_md_path, GBA_CONTEXT_SECTION.trim_start()).await?;
+            write_file(&claude_md_path, section.trim_start()).await?;
             debug!("created CLAUDE.md with GBA context section");
         }
     }
@@ -711,5 +877,155 @@ mod tests {
         // alpha/ (dir) should come before both files
         assert!(alpha_pos < beta_pos);
         assert!(alpha_pos < zebra_pos);
+    }
+
+    #[tokio::test]
+    async fn test_should_parse_agent_analysis_json() {
+        let dir = setup_project_dir().await;
+        let root = dir.path();
+
+        // Create directories the agent would identify
+        tokio::fs::create_dir(root.join("src"))
+            .await
+            .expect("test: mkdir");
+        tokio::fs::create_dir(root.join("tests"))
+            .await
+            .expect("test: mkdir");
+
+        let json = r#"{
+            "language": "Rust",
+            "framework": "tokio",
+            "build_system": "cargo",
+            "architecture_summary": "A CLI tool",
+            "directories": [
+                {"path": "src/", "description": "Main source code", "importance": "high"},
+                {"path": "tests/", "description": "Test files", "importance": "medium"}
+            ],
+            "entry_points": ["src/main.rs"],
+            "conventions": ["snake_case"]
+        }"#;
+
+        let dirs = resolve_important_dirs(json, root).await;
+        let names: Vec<&str> = dirs
+            .iter()
+            .filter_map(|p| p.file_name())
+            .filter_map(|n| n.to_str())
+            .collect();
+
+        assert!(names.contains(&"src"));
+        assert!(names.contains(&"tests"));
+    }
+
+    #[tokio::test]
+    async fn test_should_fallback_to_well_known_dirs_on_invalid_json() {
+        let dir = setup_project_dir().await;
+        let root = dir.path();
+
+        tokio::fs::create_dir(root.join("src"))
+            .await
+            .expect("test: mkdir");
+
+        let invalid_json = "This is not valid JSON at all.";
+        let dirs = resolve_important_dirs(invalid_json, root).await;
+
+        let names: Vec<&str> = dirs
+            .iter()
+            .filter_map(|p| p.file_name())
+            .filter_map(|n| n.to_str())
+            .collect();
+
+        assert!(names.contains(&"src"));
+    }
+
+    #[tokio::test]
+    async fn test_should_extract_json_from_code_fence() {
+        let text = r#"Here is my analysis:
+
+```json
+{"language": "Rust", "directories": []}
+```
+
+Done!"#;
+
+        let extracted = extract_json_block(text);
+        assert!(extracted.starts_with('{'));
+        assert!(extracted.ends_with('}'));
+
+        let parsed: serde_json::Result<RepoAnalysis> = serde_json::from_str(extracted);
+        assert!(parsed.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_should_reject_directory_traversal_in_analysis() {
+        let dir = setup_project_dir().await;
+        let root = dir.path();
+
+        tokio::fs::create_dir(root.join("src"))
+            .await
+            .expect("test: mkdir");
+
+        let json = r#"{
+            "language": "Rust",
+            "directories": [
+                {"path": "../etc/passwd", "description": "malicious", "importance": "high"},
+                {"path": "src/", "description": "source", "importance": "high"}
+            ]
+        }"#;
+
+        let dirs = resolve_important_dirs(json, root).await;
+        let names: Vec<&str> = dirs
+            .iter()
+            .filter_map(|p| p.file_name())
+            .filter_map(|n| n.to_str())
+            .collect();
+
+        assert!(names.contains(&"src"));
+        assert!(!names.iter().any(|n| n.contains("passwd")));
+    }
+
+    #[tokio::test]
+    async fn test_should_fallback_when_no_valid_dirs_in_analysis() {
+        let dir = setup_project_dir().await;
+        let root = dir.path();
+
+        tokio::fs::create_dir(root.join("src"))
+            .await
+            .expect("test: mkdir");
+
+        let json = r#"{
+            "language": "Rust",
+            "directories": [
+                {"path": "nonexistent-dir/", "description": "does not exist", "importance": "high"}
+            ]
+        }"#;
+
+        let dirs = resolve_important_dirs(json, root).await;
+        let names: Vec<&str> = dirs
+            .iter()
+            .filter_map(|p| p.file_name())
+            .filter_map(|n| n.to_str())
+            .collect();
+
+        // Should fall back to well-known dirs
+        assert!(names.contains(&"src"));
+    }
+
+    #[tokio::test]
+    async fn test_should_build_gba_context_section_with_docs() {
+        let docs = vec!["src/.gba.md".to_owned(), "crates/.gba.md".to_owned()];
+
+        let section = build_gba_context_section(&docs);
+
+        assert!(section.contains("## GBA Context"));
+        assert!(section.contains("Per-directory context docs:"));
+        assert!(section.contains("- `src/.gba.md`"));
+        assert!(section.contains("- `crates/.gba.md`"));
+    }
+
+    #[tokio::test]
+    async fn test_should_build_gba_context_section_without_docs() {
+        let section = build_gba_context_section(&[]);
+        assert!(section.contains("## GBA Context"));
+        assert!(!section.contains("Per-directory"));
     }
 }

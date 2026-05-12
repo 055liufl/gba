@@ -9,6 +9,7 @@ All specs for AI to generate code.
 | 01 | [gba-prd.md](01-gba-prd.md) | Product Requirements Document |
 | 02 | [gba-design.md](02-gba-design.md) | Architecture design, crate interfaces, state schema, key flows |
 | 91 | [impl-plan.md](91-impl-plan.md) | Phased implementation plan (6 phases) |
+| 93 | [improvements-review.md](93-improvements-review.md) | Deferred findings & improvements backlog |
 
 ## Reference
 

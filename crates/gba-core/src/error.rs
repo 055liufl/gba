@@ -95,4 +95,14 @@ pub enum GbaCoreError {
         /// The invalid slug that was provided.
         slug: String,
     },
+
+    /// A general filesystem I/O operation failed (not state persistence).
+    #[error("I/O error at {path}: {source}")]
+    Io {
+        /// Path involved in the I/O operation.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: anyhow::Error,
+    },
 }
