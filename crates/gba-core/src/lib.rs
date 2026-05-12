@@ -7,6 +7,7 @@
 #![warn(rust_2024_compatibility, missing_docs, missing_debug_implementations)]
 
 pub mod context;
+pub mod engine;
 pub mod error;
 pub mod preset;
 pub mod runner;
@@ -14,6 +15,7 @@ pub mod state;
 pub mod types;
 
 pub use context::{GbaConfig, GbaContext, PresetOverride};
+pub use engine::init::InitEngine;
 pub use error::GbaCoreError;
 pub use preset::{PresetKind, TaskPreset};
 pub use runner::{AgentResult, AgentRunner};
