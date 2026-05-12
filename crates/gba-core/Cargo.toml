@@ -17,6 +17,7 @@ chrono.workspace = true
 claude-agent-sdk-rs.workspace = true
 futures.workspace = true
 gba-pm.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yml.workspace = true

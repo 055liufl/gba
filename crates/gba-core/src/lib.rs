@@ -22,4 +22,5 @@ pub use runner::{AgentResult, AgentRunner};
 pub use state::{FeatureInfo, FeatureState, PlanState, PrState, TaskState, TotalsState};
 pub use types::{
     Feature, FeatureStatus, InitResult, PlanResult, RunResult, TaskKind, TaskProgress, TaskStatus,
+    validate_slug,
 };

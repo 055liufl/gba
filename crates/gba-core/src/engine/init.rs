@@ -136,7 +136,15 @@ impl InitEngine {
             "repository analysis complete"
         );
 
-        // Step 6: Identify important directories and generate context docs
+        // Step 6: Persist summary to .gba/summary.md
+        let summary_path = self.ctx.gba_dir.join("summary.md");
+        write_file(&summary_path, &summary).await?;
+        info!(path = %summary_path.display(), "wrote project summary");
+
+        // Step 7: Append GBA context section to CLAUDE.md (create if missing)
+        append_gba_context_to_claude_md(&self.ctx.project_root).await?;
+
+        // Step 9: Identify important directories and generate context docs
         let important_dirs = find_important_dirs(&self.ctx.project_root).await;
         info!(count = important_dirs.len(), "found important directories");
 
@@ -170,7 +178,7 @@ impl InitEngine {
             debug!(path = %gba_md_path.display(), "wrote context document");
         }
 
-        // Step 7: Update .gitignore
+        // Step 10: Update .gitignore
         update_gitignore(&self.ctx.project_root).await?;
 
         Ok(InitResult {
@@ -366,6 +374,38 @@ async fn list_directory_files(dir: &Path) -> Result<String, GbaCoreError> {
 
     names.sort();
     Ok(names.join("\n"))
+}
+
+/// The GBA context section appended to `CLAUDE.md`.
+const GBA_CONTEXT_SECTION: &str = "\n\n## GBA Context\n\nThis project uses GBA for AI-assisted \
+                                   feature development. See `.gba/` for project context.\n";
+
+/// Append a GBA context section to `CLAUDE.md` in the project root.
+///
+/// Creates the file if it does not exist. If the file already contains the
+/// GBA context header, it is left unchanged.
+async fn append_gba_context_to_claude_md(project_root: &Path) -> Result<(), GbaCoreError> {
+    let claude_md_path = project_root.join("CLAUDE.md");
+    let existing = read_optional_file(&claude_md_path).await;
+
+    match existing {
+        Some(content) => {
+            if content.contains("## GBA Context") {
+                debug!("CLAUDE.md already contains GBA context section");
+            } else {
+                let mut new_content = content;
+                new_content.push_str(GBA_CONTEXT_SECTION);
+                write_file(&claude_md_path, &new_content).await?;
+                debug!("appended GBA context section to CLAUDE.md");
+            }
+        }
+        None => {
+            write_file(&claude_md_path, GBA_CONTEXT_SECTION.trim_start()).await?;
+            debug!("created CLAUDE.md with GBA context section");
+        }
+    }
+
+    Ok(())
 }
 
 /// Ensure `.trees/` is listed in the project's `.gitignore`.

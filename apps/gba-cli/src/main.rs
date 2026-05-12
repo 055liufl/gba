@@ -86,6 +86,12 @@ fn format_error(err: &anyhow::Error) -> String {
                     path.display()
                 )
             }
+            GbaCoreError::InvalidSlug { slug } => {
+                format!(
+                    "Invalid slug '{slug}'. Slugs must be lowercase alphanumeric words separated \
+                     by hyphens (e.g., 'web-frontend'), at most 64 characters."
+                )
+            }
             _ => format_error_chain(err),
         };
     }

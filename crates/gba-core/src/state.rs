@@ -234,9 +234,11 @@ impl FeatureState {
             task.completed_at = Some(Utc::now());
         }
 
-        // Recompute totals from all tasks.
-        self.totals.turns = self.tasks.iter().map(|t| t.turns).sum();
-        self.totals.cost_usd = self.tasks.iter().map(|t| t.cost_usd).sum();
+        // Recompute totals from planning phase plus all tasks.
+        let plan_turns = self.plan.as_ref().map_or(0, |p| p.turns);
+        let plan_cost = self.plan.as_ref().map_or(0.0, |p| p.cost_usd);
+        self.totals.turns = plan_turns.saturating_add(self.tasks.iter().map(|t| t.turns).sum());
+        self.totals.cost_usd = plan_cost + self.tasks.iter().map(|t| t.cost_usd).sum::<f64>();
 
         self.save().await
     }
@@ -360,8 +362,8 @@ mod tests {
         assert!((state.tasks[1].cost_usd - 0.80).abs() < 0.001); // 0.50 + 0.30
         assert!(state.tasks[1].completed_at.is_some());
 
-        // Totals recomputed: task 1 (0) + task 2 (8) + task 3 (0) = 8
-        assert_eq!(state.totals.turns, 8);
+        // Totals recomputed: plan (5) + task 1 (0) + task 2 (8) + task 3 (0) = 13
+        assert_eq!(state.totals.turns, 13);
     }
 
     #[tokio::test]

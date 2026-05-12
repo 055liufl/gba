@@ -20,7 +20,7 @@ use crate::{
     preset::PresetKind,
     runner::{AgentRunner, render_prompt},
     state::{FeatureInfo, FeatureState, PlanState, TaskState, TotalsState},
-    types::{FeatureStatus, PlanResult, TaskKind, TaskStatus},
+    types::{FeatureStatus, PlanResult, TaskKind, TaskStatus, validate_slug},
 };
 
 /// Separator prefix used to delimit spec files in the agent's response.
@@ -78,8 +78,10 @@ impl PlanEngine {
     ///
     /// # Errors
     ///
+    /// Returns `GbaCoreError::InvalidSlug` if the slug is not valid.
     /// Returns `GbaCoreError::PromptRender` if the prompt manager fails to initialize.
     pub fn new(ctx: GbaContext, slug: String) -> Result<Self, GbaCoreError> {
+        validate_slug(&slug)?;
         let runner = AgentRunner::new(
             ctx.project_root.clone(),
             ctx.config.model.clone(),

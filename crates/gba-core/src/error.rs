@@ -88,4 +88,11 @@ pub enum GbaCoreError {
         /// ID of the task that was not found.
         task_id: u32,
     },
+
+    /// The provided slug is invalid (contains unsafe characters or exceeds length).
+    #[error("invalid slug '{slug}': must match ^[a-z0-9]+(-[a-z0-9]+)* and be at most 64 bytes")]
+    InvalidSlug {
+        /// The invalid slug that was provided.
+        slug: String,
+    },
 }

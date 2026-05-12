@@ -89,6 +89,13 @@ async fn run_tui_loop(
 
     // Event loop.
     loop {
+        if app.state() == AppState::Done {
+            // Render one final frame so the user sees the "Plan complete!" message,
+            // then exit the loop.
+            terminal.draw(|f| ui::draw(f, &app))?;
+            break;
+        }
+
         terminal.draw(|f| ui::draw(f, &app))?;
 
         match event_handler.next().await? {

@@ -101,13 +101,58 @@ impl GbaContext {
         tokio::fs::try_exists(&self.gba_dir).await.unwrap_or(false)
     }
 
-    /// Resolve the feature directory path: `.gba/<NNNN>_<slug>/`.
-    pub fn feature_dir(&self, slug: &str) -> PathBuf {
-        // Scan known format: we need the number prefix. If the caller does not
-        // know the number, they should call `find_feature_dir` instead. For now,
-        // this builds a path assuming the feature already exists. We search
-        // lazily.
-        self.gba_dir.join(slug)
+    /// Resolve the feature directory path by scanning `.gba/` for a directory
+    /// matching `NNNN_<slug>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GbaCoreError::FeatureNotFound` if no matching directory exists.
+    /// Returns `GbaCoreError::StateLoad` if the `.gba/` directory cannot be read.
+    pub async fn feature_dir(&self, slug: &str) -> Result<PathBuf, GbaCoreError> {
+        let suffix = format!("_{slug}");
+
+        if !tokio::fs::try_exists(&self.gba_dir).await.unwrap_or(false) {
+            return Err(GbaCoreError::FeatureNotFound {
+                slug: slug.to_owned(),
+            });
+        }
+
+        let mut entries =
+            tokio::fs::read_dir(&self.gba_dir)
+                .await
+                .map_err(|e| GbaCoreError::StateLoad {
+                    path: self.gba_dir.clone(),
+                    source: e.into(),
+                })?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| GbaCoreError::StateLoad {
+                path: self.gba_dir.clone(),
+                source: e.into(),
+            })?
+        {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+
+            if name_str.ends_with(&suffix)
+                && let Some(prefix) = name_str.strip_suffix(&suffix)
+                && !prefix.is_empty()
+                && prefix.chars().all(|c| c.is_ascii_digit())
+            {
+                let path = entry.path();
+                if let Ok(meta) = tokio::fs::metadata(&path).await
+                    && meta.is_dir()
+                {
+                    return Ok(path);
+                }
+            }
+        }
+
+        Err(GbaCoreError::FeatureNotFound {
+            slug: slug.to_owned(),
+        })
     }
 
     /// Resolve the feature directory path with a known number.

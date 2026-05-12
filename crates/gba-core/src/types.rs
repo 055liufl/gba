@@ -3,9 +3,12 @@
 //! This module contains enums, structs, and result types used across
 //! the core engine, CLI, and state persistence layers.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::LazyLock};
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+use crate::error::GbaCoreError;
 
 /// The kind of task in a feature's implementation plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,4 +117,118 @@ pub struct RunResult {
     pub total_turns: u32,
     /// Total cost in USD across all tasks.
     pub total_cost_usd: f64,
+}
+
+/// Maximum byte length of a slug.
+const MAX_SLUG_LENGTH: usize = 64;
+
+/// Compiled regex for slug validation: one or more groups of lowercase
+/// alphanumeric characters separated by single hyphens.
+static SLUG_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z0-9]+(?:-[a-z0-9]+)*$").expect("slug regex is valid"));
+
+/// Validate that a slug is safe for use in file paths and git branch names.
+///
+/// A valid slug must:
+/// - Be at most 64 bytes long
+/// - Match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (lowercase alphanumeric segments separated by single
+///   hyphens)
+///
+/// # Errors
+///
+/// Returns `GbaCoreError::InvalidSlug` if the slug does not match the pattern
+/// or exceeds the length limit.
+///
+/// # Examples
+///
+/// ```
+/// use gba_core::types::validate_slug;
+///
+/// assert!(validate_slug("web-frontend").is_ok());
+/// assert!(validate_slug("my-feature-123").is_ok());
+/// assert!(validate_slug("../../etc").is_err());
+/// assert!(validate_slug("").is_err());
+/// ```
+pub fn validate_slug(slug: &str) -> Result<(), GbaCoreError> {
+    if slug.len() > MAX_SLUG_LENGTH || !SLUG_REGEX.is_match(slug) {
+        return Err(GbaCoreError::InvalidSlug {
+            slug: slug.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_accept_valid_slug() {
+        assert!(validate_slug("web-frontend").is_ok());
+        assert!(validate_slug("my-feature").is_ok());
+        assert!(validate_slug("feature123").is_ok());
+        assert!(validate_slug("a").is_ok());
+        assert!(validate_slug("abc-def-ghi").is_ok());
+        assert!(validate_slug("my-feature-123").is_ok());
+    }
+
+    #[test]
+    fn test_should_reject_empty_slug() {
+        assert!(validate_slug("").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_path_traversal() {
+        assert!(validate_slug("../../etc").is_err());
+        assert!(validate_slug("../x").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_absolute_path() {
+        assert!(validate_slug("/etc").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_uppercase() {
+        assert!(validate_slug("MyFeature").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_underscores() {
+        assert!(validate_slug("my_feature").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_special_chars() {
+        assert!(validate_slug("my feature").is_err());
+        assert!(validate_slug("my.feature").is_err());
+        assert!(validate_slug("my@feature").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_leading_hyphen() {
+        assert!(validate_slug("-leading").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_trailing_hyphen() {
+        assert!(validate_slug("trailing-").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_with_consecutive_hyphens() {
+        assert!(validate_slug("double--hyphen").is_err());
+    }
+
+    #[test]
+    fn test_should_reject_slug_exceeding_max_length() {
+        let long_slug = "a".repeat(MAX_SLUG_LENGTH + 1);
+        assert!(validate_slug(&long_slug).is_err());
+    }
+
+    #[test]
+    fn test_should_accept_slug_at_max_length() {
+        let slug = "a".repeat(MAX_SLUG_LENGTH);
+        assert!(validate_slug(&slug).is_ok());
+    }
 }

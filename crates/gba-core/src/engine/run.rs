@@ -19,7 +19,7 @@ use crate::{
     preset::PresetKind,
     runner::{AgentRunner, render_prompt},
     state::FeatureState,
-    types::{FeatureStatus, RunResult, TaskKind, TaskProgress, TaskStatus},
+    types::{FeatureStatus, RunResult, TaskKind, TaskProgress, TaskStatus, validate_slug},
 };
 
 /// Orchestrates the `gba run` workflow.
@@ -61,8 +61,10 @@ impl RunEngine {
     ///
     /// # Errors
     ///
+    /// Returns `GbaCoreError::InvalidSlug` if the slug is not valid.
     /// Returns `GbaCoreError::PromptRender` if the prompt manager fails to initialize.
     pub fn new(ctx: GbaContext, slug: String) -> Result<Self, GbaCoreError> {
+        validate_slug(&slug)?;
         let runner = AgentRunner::new(
             ctx.project_root.clone(),
             ctx.config.model.clone(),
@@ -97,11 +99,11 @@ impl RunEngine {
         // Step 2: Load state
         let mut state = FeatureState::load(&state_path).await?;
 
-        // Step 3: Load spec files
+        // Step 3: Load spec files (design and impl-plan are required; verification is optional)
         let specs_dir = feature_dir.join("specs");
-        let design_spec = read_spec_file(&specs_dir, "design.md").await;
-        let verification_spec = read_spec_file(&specs_dir, "verification.md").await;
-        let impl_plan = read_spec_file(&specs_dir, "impl-plan.md").await;
+        let design_spec = read_required_spec_file(&specs_dir, "design.md").await?;
+        let verification_spec = read_optional_spec_file(&specs_dir, "verification.md").await;
+        let impl_plan = read_required_spec_file(&specs_dir, "impl-plan.md").await?;
 
         // Step 4: Validate worktree
         let worktree_name = format!("{:04}_{}", state.feature.number, self.slug);
@@ -698,10 +700,33 @@ async fn find_feature_dir(gba_dir: &Path, slug: &str) -> Result<PathBuf, GbaCore
     })
 }
 
-/// Read a spec file from the specs directory, returning an empty string if missing.
-async fn read_spec_file(specs_dir: &Path, filename: &str) -> String {
+/// Read a required spec file from the specs directory.
+///
+/// # Errors
+///
+/// Returns `GbaCoreError::StateLoad` if the file cannot be read.
+async fn read_required_spec_file(specs_dir: &Path, filename: &str) -> Result<String, GbaCoreError> {
     let path = specs_dir.join(filename);
-    tokio::fs::read_to_string(&path).await.unwrap_or_default()
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| GbaCoreError::StateLoad {
+            path,
+            source: e.into(),
+        })
+}
+
+/// Read an optional spec file from the specs directory.
+///
+/// Returns an empty string if the file does not exist, logging a warning.
+async fn read_optional_spec_file(specs_dir: &Path, filename: &str) -> String {
+    let path = specs_dir.join(filename);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "optional spec file not found, continuing with empty content");
+            String::new()
+        }
+    }
 }
 
 /// Extract a phase number from a task description.
