@@ -112,6 +112,29 @@ pub struct FeatureState {
 }
 
 impl FeatureState {
+    /// Create a new `FeatureState` with the given fields and file path.
+    ///
+    /// All tasks should be in `Pending` status. The state is not automatically
+    /// saved to disk — call [`save`](Self::save) to persist.
+    pub fn new(
+        feature: FeatureInfo,
+        status: FeatureStatus,
+        plan: Option<PlanState>,
+        tasks: Vec<TaskState>,
+        totals: TotalsState,
+        path: PathBuf,
+    ) -> Self {
+        Self {
+            feature,
+            status,
+            plan,
+            tasks,
+            totals,
+            pr: PrState::default(),
+            path,
+        }
+    }
+
     /// Load feature state from a YAML file.
     ///
     /// # Errors

@@ -5,3 +5,4 @@
 //! and file I/O.
 
 pub mod init;
+pub mod plan;
