@@ -110,6 +110,12 @@ async fn run_tui_loop(
         MessageRole::System,
         "Starting planning session...".to_owned(),
     );
+    // Show an immediate prompt so the user knows what to do while the agent
+    // session is being established.
+    app.push_message(
+        MessageRole::Assistant,
+        "您能详细描述一下想要构建的功能吗？".to_owned(),
+    );
     terminal.draw(|f| ui::draw(f, &app))?;
 
     let response = engine.start().await?;
