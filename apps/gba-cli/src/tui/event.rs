@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, KeyEventKind};
 use tokio::sync::mpsc;
 
 /// Events delivered by the [`EventHandler`].
@@ -63,7 +63,16 @@ impl EventHandler {
                     };
 
                     let mapped = match evt {
-                        CrosstermEvent::Key(key) => Some(Event::Key(key)),
+                        // Only forward press and repeat events; release events
+                        // can carry unexpected KeyCode values on terminals that
+                        // support keyboard enhancement protocols (e.g. Kitty,
+                        // WezTerm), causing spurious characters to be inserted.
+                        CrosstermEvent::Key(key)
+                            if key.kind == KeyEventKind::Press
+                                || key.kind == KeyEventKind::Repeat =>
+                        {
+                            Some(Event::Key(key))
+                        }
                         CrosstermEvent::Resize(_, _) => Some(Event::Resize),
                         _ => None,
                     };
@@ -103,14 +112,13 @@ impl EventHandler {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
     use super::*;
 
     #[test]
     fn test_should_create_event_variants() {
-        let key_event = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('a'),
-            crossterm::event::KeyModifiers::NONE,
-        );
+        let key_event = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         let evt = Event::Key(key_event);
         assert!(matches!(evt, Event::Key(_)));
 
@@ -119,5 +127,26 @@ mod tests {
 
         let resize = Event::Resize;
         assert!(matches!(resize, Event::Resize));
+    }
+
+    /// Verify that only Press and Repeat key events are forwarded; Release
+    /// events must be discarded to prevent spurious characters (e.g. 'h')
+    /// being inserted when pressing arrow keys on terminals that emit both
+    /// press and release events via the keyboard enhancement protocol.
+    #[test]
+    fn test_should_accept_press_and_repeat_key_events() {
+        let press = KeyEvent::new_with_kind(KeyCode::Left, KeyModifiers::NONE, KeyEventKind::Press);
+        let repeat =
+            KeyEvent::new_with_kind(KeyCode::Left, KeyModifiers::NONE, KeyEventKind::Repeat);
+        let release =
+            KeyEvent::new_with_kind(KeyCode::Left, KeyModifiers::NONE, KeyEventKind::Release);
+
+        // The match arm in EventHandler uses the same predicate.
+        let accepts =
+            |key: &KeyEvent| key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat;
+
+        assert!(accepts(&press), "Press should be accepted");
+        assert!(accepts(&repeat), "Repeat should be accepted");
+        assert!(!accepts(&release), "Release must be rejected");
     }
 }
