@@ -89,12 +89,16 @@ pub struct TaskProgress {
 /// Result of `gba init`.
 #[derive(Debug, Clone)]
 pub struct InitResult {
-    /// Whether initialization was actually performed (false if already initialized).
-    pub performed: bool,
-    /// Summary text from the repo analysis.
+    /// Whether this was a first-time initialization (`true`) or an incremental
+    /// update of an already-initialized project (`false`).
+    pub is_fresh_init: bool,
+    /// Summary text from the repo analysis (empty for incremental runs).
     pub summary: String,
-    /// Number of directories for which `.gba.md` context docs were generated.
+    /// Number of context documents generated or regenerated.
     pub context_doc_count: usize,
+    /// Number of context documents skipped because their directory contents
+    /// were unchanged (incremental update only).
+    pub context_docs_skipped: usize,
 }
 
 /// Result of `gba plan`.

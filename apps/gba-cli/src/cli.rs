@@ -32,8 +32,17 @@ pub enum Command {
     /// Initialize GBA in the current repository.
     ///
     /// Analyzes the repo structure and creates the `.gba/` directory
-    /// with project context documents.
-    Init,
+    /// with project context documents. Re-running on an already-initialized
+    /// project performs an incremental update, regenerating only context
+    /// documents whose directory contents have changed.
+    Init {
+        /// Skip generating per-directory context documents (`.gba.md`).
+        ///
+        /// Only the repository analysis is performed. Useful for a quick
+        /// first pass or when the LLM context documents are not needed.
+        #[arg(long, default_value_t = false)]
+        skip_context: bool,
+    },
 
     /// Plan a new feature interactively.
     ///

@@ -4,15 +4,28 @@
 //! 1. Scanning the project file tree to build a structural overview
 //! 2. Querying the agent to produce a project summary with directory analysis
 //! 3. Parsing the agent's JSON response to identify important directories
-//! 4. Generating per-directory context documents (`.gba.md`) for key directories
+//! 4. Generating per-directory context documents (`.gba.md`) for key directories — generated in
+//!    parallel using `JoinSet`
 //! 5. Updating `CLAUDE.md` with references to generated context docs
 //! 6. Creating the `.gba/` and `.trees/` scaffold directories
+//!
+//! ## Incremental updates
+//!
+//! On re-runs (`.gba/` already exists), the engine loads the cached
+//! `summary.md` instead of re-querying the LLM for analysis, and skips
+//! context document regeneration for directories whose file listing has not
+//! changed (tracked in `.gba/context-manifest.json`).
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use gba_pm::PromptManager;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -69,6 +82,12 @@ fn default_importance() -> String {
     "medium".to_owned()
 }
 
+/// Maps relative directory paths to their last-seen file listing.
+///
+/// Persisted as `.gba/context-manifest.json` to enable incremental updates:
+/// a directory is skipped if its current file listing matches the stored one.
+type ContextManifest = HashMap<String, String>;
+
 /// Parsed JSON response from the agent's repository analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RepoAnalysis {
@@ -100,10 +119,13 @@ struct RepoAnalysis {
 /// Creates the `.gba/` and `.trees/` directories, analyzes the repository
 /// structure via the agent, and generates `.gba.md` context documents for
 /// important directories.
+///
+/// The runner is stored behind an `Arc` so context-generation tasks can be
+/// spawned in parallel and each task can hold a cheap clone of the runner.
 #[derive(Debug)]
 pub struct InitEngine {
     ctx: GbaContext,
-    runner: AgentRunner,
+    runner: Arc<AgentRunner>,
     pm: PromptManager,
 }
 
@@ -115,11 +137,11 @@ impl InitEngine {
     /// Returns `GbaCoreError::PromptRender` if the prompt manager fails to
     /// initialize (should not happen with valid embedded templates).
     pub fn new(ctx: GbaContext) -> Result<Self, GbaCoreError> {
-        let runner = AgentRunner::new(
+        let runner = Arc::new(AgentRunner::new(
             ctx.project_root.clone(),
             ctx.config.model.clone(),
             ctx.config.max_budget_usd,
-        );
+        ));
         let pm = PromptManager::new().map_err(|e| GbaCoreError::PromptRender {
             template: "<init>".to_owned(),
             source: e,
@@ -127,96 +149,137 @@ impl InitEngine {
         Ok(Self { ctx, runner, pm })
     }
 
-    /// Execute the full initialization workflow.
+    /// Execute the initialization or incremental-update workflow.
     ///
-    /// 1. Check whether the project is already initialized.
-    /// 2. Create `.gba/` and `.trees/` directories.
-    /// 3. Scan the project file tree.
-    /// 4. Query the agent to analyze the repository (returns JSON).
-    /// 5. Parse the JSON analysis to identify important directories.
-    /// 6. Generate `.gba.md` context documents for each important directory.
-    /// 7. Append GBA context section (with `.gba.md` references) to `CLAUDE.md`.
-    /// 8. Update `.gitignore` to include `.trees/`.
+    /// **Fresh init** (`.gba/` does not exist):
+    /// 1. Create `.gba/` and `.trees/` directories.
+    /// 2. Scan the project file tree.
+    /// 3. Query the agent to analyze the repository (returns JSON).
+    /// 4. Parse the JSON to identify important directories.
+    /// 5. Unless `skip_context`, generate `.gba.md` docs in **parallel**.
+    /// 6. Append GBA context section to `CLAUDE.md`.
+    /// 7. Update `.gitignore`.
+    ///
+    /// **Incremental update** (`.gba/` already exists):
+    /// - Loads cached `summary.md` — no re-analysis API call.
+    /// - Loads `.gba/context-manifest.json` to compare file listings.
+    /// - Only regenerates context docs for directories whose contents changed.
+    /// - Regeneration still runs in parallel.
     ///
     /// # Errors
     ///
     /// Returns `GbaCoreError` on filesystem, prompt rendering, or agent errors.
-    pub async fn run(&self) -> Result<InitResult, GbaCoreError> {
-        // Step 1: Check if already initialized
-        if self.ctx.is_initialized().await {
+    pub async fn run(&self, skip_context: bool) -> Result<InitResult, GbaCoreError> {
+        let is_fresh_init = !self.ctx.is_initialized().await;
+
+        // Already initialized + skip_context: nothing to do.
+        if !is_fresh_init && skip_context {
             return Ok(InitResult {
-                performed: false,
-                summary: "Already initialized".to_owned(),
+                is_fresh_init: false,
+                summary: String::new(),
                 context_doc_count: 0,
+                context_docs_skipped: 0,
             });
         }
 
-        // Step 2: Create scaffold directories
-        info!("creating .gba/ and .trees/ directories");
-        create_dir(&self.ctx.gba_dir).await?;
-        create_dir(&self.ctx.trees_dir).await?;
+        // Create scaffold directories (create_dir_all is idempotent on re-runs).
+        if is_fresh_init {
+            info!("creating .gba/ and .trees/ directories");
+            create_dir(&self.ctx.gba_dir).await?;
+            create_dir(&self.ctx.trees_dir).await?;
+        }
 
-        // Step 3: Scan the project file tree
+        // Scan the project file tree.
         info!("scanning project file tree");
         let file_tree = scan_file_tree(&self.ctx.project_root, MAX_SCAN_DEPTH).await?;
         debug!(lines = file_tree.lines().count(), "file tree scanned");
 
-        // Step 4: Read existing CLAUDE.md for context
-        let claude_md = read_optional_file(&self.ctx.project_root.join("CLAUDE.md")).await;
-
-        // Step 5: Render prompts and query the agent for analysis
-        info!("analyzing repository structure");
         let system_prompt = render_prompt(&self.pm, "init-system", &json!({}))?;
-        let user_prompt = render_prompt(
-            &self.pm,
-            "init-analyze-repo",
-            &json!({
-                "project_root": self.ctx.project_root.display().to_string(),
-                "file_tree": file_tree,
-                "claude_md": claude_md.as_deref().unwrap_or(""),
-            }),
-        )?;
 
-        let analyze_preset = PresetKind::InitAnalyze.preset();
-        let result = self
-            .runner
-            .query(&analyze_preset, &system_prompt, &user_prompt, None)
-            .await?;
-        let summary = result.text;
+        // Analyze repository structure.
+        // Fresh init: run the LLM analysis and persist the result.
+        // Incremental: load the cached summary from disk to avoid an API call.
+        let (summary, important_dirs) = if is_fresh_init {
+            info!("analyzing repository structure");
+            let claude_md = read_optional_file(&self.ctx.project_root.join("CLAUDE.md")).await;
+            let user_prompt = render_prompt(
+                &self.pm,
+                "init-analyze-repo",
+                &json!({
+                    "project_root": self.ctx.project_root.display().to_string(),
+                    "file_tree": file_tree,
+                    "claude_md": claude_md.as_deref().unwrap_or(""),
+                }),
+            )?;
+            let analyze_preset = PresetKind::InitAnalyze.preset();
+            let result = self
+                .runner
+                .query(&analyze_preset, &system_prompt, &user_prompt, None)
+                .await?;
+            let summary = result.text;
+            info!(
+                turns = result.turns,
+                cost_usd = result.cost_usd,
+                "repository analysis complete"
+            );
+            let summary_path = self.ctx.gba_dir.join("summary.md");
+            write_file(&summary_path, &summary).await?;
+            info!(path = %summary_path.display(), "wrote project summary");
+            let dirs = resolve_important_dirs(&summary, &self.ctx.project_root).await;
+            info!(count = dirs.len(), "resolved important directories");
+            (summary, dirs)
+        } else {
+            info!("loading cached repository analysis for incremental update");
+            let summary_path = self.ctx.gba_dir.join("summary.md");
+            let summary = read_optional_file(&summary_path).await.unwrap_or_default();
+            let dirs = resolve_important_dirs(&summary, &self.ctx.project_root).await;
+            info!(
+                count = dirs.len(),
+                "resolved important directories from cache"
+            );
+            (summary, dirs)
+        };
 
-        info!(
-            turns = result.turns,
-            cost_usd = result.cost_usd,
-            "repository analysis complete"
-        );
+        // Fresh init + skip_context: scaffold only, no context docs.
+        if skip_context {
+            append_gba_context_to_claude_md(&self.ctx.project_root, &[]).await?;
+            update_gitignore(&self.ctx.project_root).await?;
+            return Ok(InitResult {
+                is_fresh_init,
+                summary,
+                context_doc_count: 0,
+                context_docs_skipped: 0,
+            });
+        }
 
-        // Step 6: Parse the JSON analysis result to identify important directories.
-        // Falls back to well-known directory names if parsing fails.
-        let important_dirs = resolve_important_dirs(&summary, &self.ctx.project_root).await;
-        info!(
-            count = important_dirs.len(),
-            "resolved important directories"
-        );
+        // Load the manifest for incremental comparison.
+        let manifest = load_manifest(&self.ctx.gba_dir).await;
 
-        // Step 7: Persist summary to .gba/summary.md
-        let summary_path = self.ctx.gba_dir.join("summary.md");
-        write_file(&summary_path, &summary).await?;
-        info!(path = %summary_path.display(), "wrote project summary");
-
-        // Step 8: Generate .gba.md context docs for each important directory
-        let mut generated_docs: Vec<String> = Vec::new();
+        // Render all context prompts upfront so the spawned tasks only need
+        // the pre-built strings (no PromptManager required inside tasks).
+        // Collect (dir_path, relative_str, file_list, rendered_prompt) for
+        // directories that need (re-)generation.  Skip unchanged ones.
+        let system_prompt = Arc::new(system_prompt);
+        let mut task_inputs: Vec<(PathBuf, String, String, String)> = Vec::new();
+        let mut skipped_docs: Vec<String> = Vec::new();
 
         for dir_path in &important_dirs {
-            // dir_path was constructed from project_root.join(name), so strip_prefix always
-            // succeeds
             let relative = dir_path
                 .strip_prefix(&self.ctx.project_root)
                 .unwrap_or(dir_path);
             let relative_str = relative.display().to_string();
-
-            debug!(dir = %relative_str, "generating context for directory");
-
             let file_list = list_directory_files(dir_path).await?;
+
+            // Incremental: skip directories whose file listing has not changed.
+            if !is_fresh_init
+                && let Some(cached) = manifest.get(&relative_str)
+                && *cached == file_list
+            {
+                debug!(dir = %relative_str, "skipping unchanged directory");
+                skipped_docs.push(format!("{relative_str}/.gba.md"));
+                continue;
+            }
+
             let context_prompt = render_prompt(
                 &self.pm,
                 "init-generate-context",
@@ -226,34 +289,86 @@ impl InitEngine {
                     "file_list": file_list,
                 }),
             )?;
-
-            let gen_preset = PresetKind::InitGenerateContext.preset();
-            let context_result = self
-                .runner
-                .query(&gen_preset, &system_prompt, &context_prompt, None)
-                .await?;
-
-            let gba_md_path = dir_path.join(".gba.md");
-            write_file(&gba_md_path, &context_result.text).await?;
-            debug!(path = %gba_md_path.display(), "wrote context document");
-
-            generated_docs.push(format!("{relative_str}/.gba.md"));
+            task_inputs.push((dir_path.clone(), relative_str, file_list, context_prompt));
         }
 
-        // Step 9: Append GBA context section to CLAUDE.md (after context docs are generated)
-        append_gba_context_to_claude_md(&self.ctx.project_root, &generated_docs).await?;
+        // Spawn all context-generation tasks in parallel.
+        let mut join_set: JoinSet<Result<(PathBuf, String, String, String), GbaCoreError>> =
+            JoinSet::new();
 
-        // Step 10: Update .gitignore
+        for (dir_path, relative_str, file_list, context_prompt) in task_inputs {
+            let runner = Arc::clone(&self.runner);
+            let system_prompt = Arc::clone(&system_prompt);
+            join_set.spawn(async move {
+                let gen_preset = PresetKind::InitGenerateContext.preset();
+                let result = runner
+                    .query(&gen_preset, &system_prompt, &context_prompt, None)
+                    .await?;
+                Ok((dir_path, relative_str, file_list, result.text))
+            });
+        }
+
+        let mut generated_docs: Vec<String> = Vec::new();
+        let mut updated_manifest = manifest;
+
+        while let Some(join_result) = join_set.join_next().await {
+            let (dir_path, relative_str, file_list, content) =
+                join_result.map_err(|e| GbaCoreError::AgentQuery {
+                    message: format!("context generation task panicked: {e}"),
+                    source: None,
+                })??;
+            let gba_md_path = dir_path.join(".gba.md");
+            write_file(&gba_md_path, &content).await?;
+            debug!(path = %gba_md_path.display(), "wrote context document");
+            generated_docs.push(format!("{relative_str}/.gba.md"));
+            updated_manifest.insert(relative_str, file_list);
+        }
+
+        // Persist the updated manifest.
+        save_manifest(&self.ctx.gba_dir, &updated_manifest).await?;
+
+        // Update CLAUDE.md listing all current docs (generated + unchanged).
+        let all_docs: Vec<String> = generated_docs
+            .iter()
+            .chain(skipped_docs.iter())
+            .cloned()
+            .collect();
+        append_gba_context_to_claude_md(&self.ctx.project_root, &all_docs).await?;
         update_gitignore(&self.ctx.project_root).await?;
 
-        let context_doc_count = important_dirs.len();
-
         Ok(InitResult {
-            performed: true,
+            is_fresh_init,
             summary,
-            context_doc_count,
+            context_doc_count: generated_docs.len(),
+            context_docs_skipped: skipped_docs.len(),
         })
     }
+}
+
+/// Load the context manifest from `.gba/context-manifest.json`.
+///
+/// Returns an empty map if the file does not exist or cannot be parsed.
+async fn load_manifest(gba_dir: &Path) -> ContextManifest {
+    let path = gba_dir.join("context-manifest.json");
+    tokio::fs::read_to_string(&path)
+        .await
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the context manifest to `.gba/context-manifest.json`.
+///
+/// # Errors
+///
+/// Returns `GbaCoreError::Io` if serialization or writing fails.
+async fn save_manifest(gba_dir: &Path, manifest: &ContextManifest) -> Result<(), GbaCoreError> {
+    let path = gba_dir.join("context-manifest.json");
+    let content = serde_json::to_string_pretty(manifest).map_err(|e| GbaCoreError::Io {
+        path: path.clone(),
+        source: e.into(),
+    })?;
+    write_file(&path, &content).await
 }
 
 /// Parse the agent's analysis JSON and resolve directory paths.
@@ -1027,5 +1142,45 @@ Done!"#;
         let section = build_gba_context_section(&[]);
         assert!(section.contains("## GBA Context"));
         assert!(!section.contains("Per-directory"));
+    }
+
+    #[tokio::test]
+    async fn test_should_return_empty_manifest_when_file_missing() {
+        let dir = setup_project_dir().await;
+        let manifest = load_manifest(dir.path()).await;
+        assert!(manifest.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_should_round_trip_manifest() {
+        let dir = setup_project_dir().await;
+        let mut manifest = ContextManifest::new();
+        manifest.insert("src".to_owned(), "main.rs\nlib.rs\n".to_owned());
+        manifest.insert("crates".to_owned(), "gba-core/\ngba-pm/\n".to_owned());
+
+        save_manifest(dir.path(), &manifest)
+            .await
+            .expect("save should succeed");
+
+        let loaded = load_manifest(dir.path()).await;
+        assert_eq!(
+            loaded.get("src").map(String::as_str),
+            Some("main.rs\nlib.rs\n")
+        );
+        assert_eq!(
+            loaded.get("crates").map(String::as_str),
+            Some("gba-core/\ngba-pm/\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_should_return_empty_manifest_on_corrupt_json() {
+        let dir = setup_project_dir().await;
+        tokio::fs::write(dir.path().join("context-manifest.json"), "not json")
+            .await
+            .expect("test: write");
+
+        let manifest = load_manifest(dir.path()).await;
+        assert!(manifest.is_empty());
     }
 }
