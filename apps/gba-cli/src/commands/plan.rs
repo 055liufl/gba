@@ -126,6 +126,12 @@ async fn handle_enter(
     let input = app.take_input();
     let trimmed = input.trim();
 
+    if trimmed == "/quit" {
+        app.push_message(MessageRole::System, "Session aborted.".to_owned());
+        app.set_state(AppState::Done);
+        return Ok(());
+    }
+
     if trimmed.is_empty() || trimmed == "/done" {
         // Finalize the plan.
         app.set_state(AppState::Waiting);
