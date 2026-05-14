@@ -7,9 +7,15 @@
 use std::io;
 
 use crossterm::{
-    event::KeyCode,
+    event::{
+        KeyCode, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
+    },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+        supports_keyboard_enhancement,
+    },
 };
 use gba_core::{GbaContext, PlanEngine};
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -49,7 +55,22 @@ pub async fn execute(
     // Set up the terminal for TUI rendering.
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+
+    // Push DISAMBIGUATE_ESCAPE_CODES when the terminal supports keyboard
+    // enhancement. Without this, terminals such as Kitty or WezTerm encode
+    // the left arrow key with the same byte sequence used for 'h' in some
+    // configurations, making it impossible for crossterm to distinguish them.
+    let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    if keyboard_enhanced {
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        )?;
+    } else {
+        execute!(stdout, EnterAlternateScreen)?;
+    }
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -57,7 +78,15 @@ pub async fn execute(
 
     // Restore the terminal regardless of outcome.
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    if keyboard_enhanced {
+        execute!(
+            terminal.backend_mut(),
+            PopKeyboardEnhancementFlags,
+            LeaveAlternateScreen,
+        )?;
+    } else {
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    }
     terminal.show_cursor()?;
 
     result
