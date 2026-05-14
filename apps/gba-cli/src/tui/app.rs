@@ -155,7 +155,14 @@ impl App {
                 true
             }
             KeyCode::Char(c) => {
-                self.on_char(c);
+                // Only insert when no modifier other than SHIFT is active.
+                // Some terminals encode arrow keys as ESC + letter (e.g.
+                // \x1bh for left-arrow), which crossterm decodes as
+                // Alt+<letter>.  Without this guard the letter leaks into
+                // the input buffer.
+                if key.modifiers.difference(KeyModifiers::SHIFT).is_empty() {
+                    self.on_char(c);
+                }
                 false
             }
             KeyCode::Backspace => {
@@ -478,6 +485,31 @@ mod tests {
         app.on_delete();
         assert_eq!(app.input(), "AC");
         assert_eq!(app.cursor(), 1);
+    }
+
+    #[test]
+    fn test_should_not_insert_char_with_alt_modifier() {
+        let mut app = App::new("test".to_owned());
+        // Simulate Alt+h — some terminals send this for left-arrow.
+        let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+        app.on_key(key);
+        assert!(app.input().is_empty(), "Alt+h must not insert 'h'");
+    }
+
+    #[test]
+    fn test_should_not_insert_char_with_ctrl_modifier() {
+        let mut app = App::new("test".to_owned());
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        app.on_key(key);
+        assert!(app.input().is_empty(), "Ctrl+a must not insert 'a'");
+    }
+
+    #[test]
+    fn test_should_insert_char_with_shift_modifier() {
+        let mut app = App::new("test".to_owned());
+        let key = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT);
+        app.on_key(key);
+        assert_eq!(app.input(), "H", "Shift+h should insert 'H'");
     }
 
     #[test]
