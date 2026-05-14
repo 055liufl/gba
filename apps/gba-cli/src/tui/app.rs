@@ -155,6 +155,14 @@ impl App {
                 true
             }
             KeyCode::Char(c) => {
+                // U+007F (DEL) is the byte some terminals send for the
+                // Backspace key.  crossterm may decode it as Char('\x7f')
+                // rather than KeyCode::Backspace when keyboard-enhancement
+                // protocols are active, so we handle it explicitly here.
+                if c == '\x7f' {
+                    self.on_backspace();
+                    return false;
+                }
                 // Only insert when no modifier other than SHIFT is active.
                 // Some terminals encode arrow keys as ESC + letter (e.g.
                 // \x1bh for left-arrow), which crossterm decodes as
@@ -366,6 +374,19 @@ mod tests {
         app.on_backspace();
         assert_eq!(app.input(), "AB");
         assert_eq!(app.cursor(), 2);
+    }
+
+    #[test]
+    fn test_should_handle_del_char_as_backspace() {
+        // Some terminals (e.g. under Kitty keyboard enhancement) send U+007F
+        // (DEL) as Char('\x7f') instead of KeyCode::Backspace.
+        let mut app = App::new("test".to_owned());
+        app.on_char('A');
+        app.on_char('B');
+        let key = KeyEvent::new(KeyCode::Char('\x7f'), KeyModifiers::NONE);
+        app.on_key(key);
+        assert_eq!(app.input(), "A");
+        assert_eq!(app.cursor(), 1);
     }
 
     #[test]

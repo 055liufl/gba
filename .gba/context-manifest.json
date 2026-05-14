@@ -1,0 +1,11 @@
+{
+  "apps/gba-cli/src": ".gba.md\ncli.rs\ncommands/\nmain.rs\ntui/",
+  "specs": "01-gba-prd.md\n02-gba-design.md\n91-impl-plan.md\n93-improvements-review.md\nGBA-design-2.png\nREADME.md",
+  "crates/gba-pm/templates": ".gba.md\ninit-analyze-repo.md.j2\ninit-generate-context.md.j2\ninit-system.md.j2\nplan-generate-impl-plan.md.j2\nplan-generate-spec.md.j2\nplan-start-conversation.md.j2\nplan-system.md.j2\nrun-build-phase-resume.md.j2\nrun-build-phase.md.j2\nrun-commit.md.j2\nrun-review-fix.md.j2\nrun-review.md.j2\nrun-submit-pr.md.j2\nrun-system.md.j2\nrun-verification.md.j2",
+  ".github/workflows": "build.yml",
+  "crates/gba-core/src": ".gba.md\ncontext.rs\nengine/\nerror.rs\nlib.rs\npreset.rs\nrunner.rs\nstate.rs\ntypes.rs",
+  "crates/gba-core/src/engine": "init.rs\nmod.rs\nplan.rs\nrun.rs",
+  "docs/research": "claude-agent-sdk-rs-api.md",
+  "apps/gba-cli/tests": ".gba.md\ncli_parsing.rs",
+  "crates/gba-pm/src": ".gba.md\nerror.rs\nlib.rs\nmanager.rs\ntemplates.rs"
+}
